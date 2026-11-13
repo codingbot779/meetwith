@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, MapPin, Pencil, Share2, Trash2, UserRound, UsersRound, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, KeyRound, MapPin, Pencil, Share2, ShieldCheck, Trash2, UserRound, UsersRound, X } from "lucide-react";
 import Link from "next/link";
 import type { MeetingEvent } from "@/lib/types";
 import { slotKey, timeSlots } from "@/lib/types";
@@ -28,6 +28,11 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   const [activeDate, setActiveDate] = useState(0);
   const [focusedSlot, setFocusedSlot] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [eventDeleted, setEventDeleted] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
   const dragValue = useRef<boolean | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
 
@@ -52,6 +57,13 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     const savedName = localStorage.getItem(`hanjari:${eventId}:name`);
     if (savedId) setParticipantId(savedId);
     if (savedName) setName(savedName);
+    // 관리자 링크(#admin=...)로 들어오면 이 브라우저에 삭제 권한을 저장하고 주소창에서 키를 지웁니다.
+    const hashToken = new URLSearchParams(window.location.hash.slice(1)).get("admin");
+    if (hashToken) {
+      localStorage.setItem(`hanjari:${eventId}:admin`, hashToken);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    setAdminToken(hashToken || localStorage.getItem(`hanjari:${eventId}:admin`));
     if (new URLSearchParams(window.location.search).get("created") === "1") setShareOpen(true);
   }, [eventId, loadEvent]);
 
@@ -62,12 +74,12 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   }, [toast]);
 
   useEffect(() => {
-    if (!shareOpen) return;
+    if (!shareOpen && !deleteOpen) return;
     closeButton.current?.focus();
-    const close = (keyboard: KeyboardEvent) => { if (keyboard.key === "Escape") setShareOpen(false); };
+    const close = (keyboard: KeyboardEvent) => { if (keyboard.key === "Escape") { setShareOpen(false); if (!deletingEvent) setDeleteOpen(false); } };
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
-  }, [shareOpen]);
+  }, [shareOpen, deleteOpen, deletingEvent]);
 
   const slots = useMemo(() => event ? timeSlots(event.startTime, event.endTime, event.slotMinutes) : [], [event]);
   const counts = useMemo(() => {
@@ -84,21 +96,25 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
 
   function showToast(message: string) { setToast(message); }
 
-  async function copyLink() {
-    const url = window.location.href.split("?")[0];
+  async function copyText(text: string, message: string) {
     try {
-      await navigator.clipboard.writeText(url);
-      showToast("초대 링크를 복사했어요.");
+      await navigator.clipboard.writeText(text);
     } catch {
       const input = document.createElement("textarea");
-      input.value = url; document.body.appendChild(input); input.select(); document.execCommand("copy"); input.remove();
-      showToast("초대 링크를 복사했어요.");
+      input.value = text; document.body.appendChild(input); input.select(); document.execCommand("copy"); input.remove();
     }
+    showToast(message);
   }
+
+  function inviteUrl() { return `${window.location.origin}/e/${eventId}`; }
+  function adminUrl() { return `${inviteUrl()}#admin=${adminToken}`; }
+
+  async function copyLink() { await copyText(inviteUrl(), "초대 링크를 복사했어요."); }
+  async function copyAdminLink() { if (adminToken) await copyText(adminUrl(), "관리자 링크를 복사했어요. 나만 볼 수 있는 곳에 보관하세요."); }
 
   async function nativeShare() {
     if (!event) return;
-    const url = window.location.href.split("?")[0];
+    const url = inviteUrl();
     if (navigator.share) {
       try { await navigator.share({ title: `${event.title} · 한자리`, text: "되는 시간을 알려주세요!", url }); } catch { return; }
     } else await copyLink();
@@ -156,6 +172,23 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     showToast("응답을 삭제했어요.");
   }
 
+  async function deleteMeeting() {
+    setDeletingEvent(true); setDeleteError("");
+    try {
+      const response = await fetch(`/api/events/${eventId}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adminToken }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "모임을 삭제하지 못했습니다.");
+      localStorage.removeItem(`hanjari:${eventId}:participant`);
+      localStorage.removeItem(`hanjari:${eventId}:name`);
+      localStorage.removeItem(`hanjari:${eventId}:admin`);
+      setDeleteOpen(false);
+      setEvent(null);
+      setEventDeleted(true);
+    } catch (caught) {
+      setDeleteError(caught instanceof Error ? caught.message : "모임을 삭제하지 못했습니다.");
+    } finally { setDeletingEvent(false); }
+  }
+
   function focusBest(key: string, date: string) {
     setActiveDate(Math.max(0, event?.dates.indexOf(date) ?? 0));
     setFocusedSlot(key);
@@ -163,6 +196,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   }
 
   if (loading) return <div className="loading-screen"><div><div className="loading-mark" /><p>모임 일정을 불러오는 중…</p></div></div>;
+  if (eventDeleted) return <div className="error-screen"><div><ShieldCheck size={44} strokeWidth={1.4} style={{ color: "var(--accent)" }} /><h1>모임을 삭제했어요</h1><p className="room-description">모임 정보와 참여자들의 이름·가능한 시간이 데이터베이스에서 영구 삭제되었습니다. 이 링크로는 더 이상 접속할 수 없어요.</p><Link className="primary-button" href="/" style={{ marginTop: 20 }}><ArrowLeft size={18} /> 새 모임 만들기</Link></div></div>;
   if (!event) return <div className="error-screen"><div><h1>모임을 찾을 수 없어요</h1><p className="room-description">{error || "링크가 올바른지 확인해 주세요."}</p><Link className="primary-button" href="/"><ArrowLeft size={18} /> 새 모임 만들기</Link></div></div>;
 
   const total = event.participants.length;
@@ -244,11 +278,24 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
               {event.location.region === "overseas" ? <iframe className="map-frame" title={`${event.location.name} 구글맵스`} loading="lazy" src={`https://www.google.com/maps?q=${mapQuery}&output=embed`} referrerPolicy="no-referrer-when-downgrade" /> : <div className="naver-location"><MapPin size={42} strokeWidth={1.4} /></div>}
               <div className="location-copy"><strong>{event.location.name}</strong>{event.location.address && <p>{event.location.address}</p>}<a className="map-link" href={mapUrl} target="_blank" rel="noreferrer">{event.location.region === "domestic" ? "네이버지도" : "구글맵스"}에서 열기 <ExternalLink size={15} /></a></div>
             </div></section>}
+            <section className="side-section"><div className="side-heading"><h2>모임이 확정됐나요?</h2></div><div className="privacy-card">
+              {adminToken ? <>
+                <p><ShieldCheck size={16} style={{ verticalAlign: -3, color: "var(--accent)" }} /> 만날 시간이 정해졌다면 모임을 삭제해 주세요. 참여자들의 이름과 가능한 시간이 데이터베이스에서 영구 삭제되어 개인정보를 스스로 지킬 수 있어요.</p>
+                <p className="privacy-card-hint">모임을 만든 사람만 삭제할 수 있어요. 확정된 시간과 장소는 삭제 전에 따로 메모해 두세요.</p>
+                <button className="danger-button full-button" onClick={() => { setDeleteError(""); setDeleteOpen(true); }}><Trash2 size={17} /> 모임 삭제하기</button>
+                <button className="secondary-button full-button" style={{ marginTop: 8 }} onClick={copyAdminLink}><KeyRound size={17} /> 관리자 링크 복사</button>
+                <p className="privacy-card-hint" style={{ margin: "8px 0 0" }}>다른 기기에서 삭제하려면 관리자 링크로 접속하세요.</p>
+              </> : <>
+                <p><ShieldCheck size={16} style={{ verticalAlign: -3, color: "var(--accent)" }} /> 만날 시간이 정해지면 모임을 만든 분께 모임 삭제를 요청해 주세요. 삭제하면 내 이름과 가능한 시간이 데이터베이스에서 영구 삭제돼요.</p>
+                <p className="privacy-card-hint">모임은 만든 사람만 삭제할 수 있어요. 내 응답만 지우려면 참여자 목록의 휴지통 버튼을 누르세요.</p>
+              </>}
+            </div></section>
           </aside>
         </div>
       </main>
 
-      {shareOpen && <div className="modal-backdrop" onMouseDown={(mouse) => { if (mouse.target === mouse.currentTarget) setShareOpen(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="modal-head"><h2 id="share-title">모임 링크 공유</h2><button ref={closeButton} className="icon-button" onClick={() => setShareOpen(false)} aria-label="공유 창 닫기"><X /></button></div><p>링크를 받은 사람은 로그인 없이 바로 가능한 시간을 선택할 수 있어요.</p><div className="share-url">{shareUrlLabel}</div><div className="modal-actions"><button className="primary-button" onClick={copyLink}><Copy size={18} /> 링크 복사</button><button className="secondary-button" onClick={nativeShare}><Share2 size={18} /> 다른 앱으로 공유</button></div></section></div>}
+      {shareOpen && <div className="modal-backdrop" onMouseDown={(mouse) => { if (mouse.target === mouse.currentTarget) setShareOpen(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="modal-head"><h2 id="share-title">모임 링크 공유</h2><button ref={closeButton} className="icon-button" onClick={() => setShareOpen(false)} aria-label="공유 창 닫기"><X /></button></div><p>링크를 받은 사람은 로그인 없이 바로 가능한 시간을 선택할 수 있어요.</p><div className="share-url">{shareUrlLabel}</div><div className="modal-actions"><button className="primary-button" onClick={copyLink}><Copy size={18} /> 링크 복사</button><button className="secondary-button" onClick={nativeShare}><Share2 size={18} /> 다른 앱으로 공유</button></div>{adminToken && <div className="admin-link-box" style={{ margin: "16px 0 0" }}><strong><KeyRound size={16} style={{ verticalAlign: -3 }} /> 관리자 링크 · 나만 보관하세요</strong><p>모임이 확정되면 이 링크로 접속해 모임을 삭제할 수 있어요. 다른 기기에서도 쓸 수 있으니 <b>참여자에게는 공유하지 마세요.</b></p><div className="share-url">{adminUrl()}</div><button className="secondary-button full-button" onClick={copyAdminLink}><Copy size={17} /> 관리자 링크 복사</button></div>}</section></div>}
+      {deleteOpen && <div className="modal-backdrop" onMouseDown={(mouse) => { if (mouse.target === mouse.currentTarget && !deletingEvent) setDeleteOpen(false); }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><div className="modal-head"><h2 id="delete-title">모임을 삭제할까요?</h2><button ref={closeButton} className="icon-button" onClick={() => setDeleteOpen(false)} disabled={deletingEvent} aria-label="삭제 창 닫기"><X /></button></div><p id="delete-description">‘{event.title}’ 모임과 참여자 {total}명의 이름·가능한 시간이 데이터베이스에서 <strong>영구 삭제</strong>되며 되돌릴 수 없어요. 공유한 링크도 더 이상 열리지 않습니다.</p>{best[0] && <div className="share-url">가장 많이 겹친 시간: {dateParts(best[0].date).label} · {best[0].time} ({best[0].people.length}/{total}명)</div>}{deleteError && <p className="form-error" role="alert">{deleteError}</p>}<div className="modal-actions"><button className="danger-button" onClick={deleteMeeting} disabled={deletingEvent}><Trash2 size={18} /> {deletingEvent ? "삭제하는 중…" : "영구 삭제하기"}</button><button className="secondary-button" onClick={() => setDeleteOpen(false)} disabled={deletingEvent}>취소</button></div></section></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </>
   );

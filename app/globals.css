@@ -96,6 +96,14 @@
   .primary-button:hover:not(:disabled) { background: var(--green-600); transform: translateY(-2px); }
   .primary-button:active:not(:disabled), .secondary-button:active:not(:disabled) { transform: scale(.98); }
   .secondary-button { background: transparent; color: var(--accent); }
+  .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 18px; border: 1px solid var(--red-600); border-radius: 8px; background: transparent; color: var(--red-600); font-weight: 600; transition: background .15s, color .15s; }
+  .danger-button:hover:not(:disabled) { background: var(--red-600); color: var(--cream-50); }
+  .privacy-card p { margin: 0 0 10px; font-size: 14px; color: var(--text); }
+  .admin-link-box { border: 1px dashed var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  .admin-link-box strong { font-size: 14px; }
+  .modal .admin-link-box p { margin: 6px 0 10px; font-size: 13px; }
+  .admin-link-box .share-url { margin-bottom: 8px; }
+  .privacy-card .privacy-card-hint { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
   .secondary-button:hover:not(:disabled) { background: var(--green-100); }
   .full-button { width: 100%; }
   .privacy-note { display: flex; justify-content: center; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; margin: -10px 0 0; }

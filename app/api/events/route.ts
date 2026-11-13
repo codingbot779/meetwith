@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     if (![30, 60].includes(body.slotMinutes)) {
       return NextResponse.json({ error: "시간 단위가 올바르지 않습니다." }, { status: 400 });
     }
-    const event = await createEvent({
+    const { event, adminToken } = await createEvent({
       ...body,
       title: body.title.trim(),
       description: body.description?.trim().slice(0, 500) ?? "",
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
         ? { ...body.location, name: body.location.name.trim().slice(0, 100), address: body.location.address?.trim().slice(0, 200) ?? "" }
         : null,
     });
-    return NextResponse.json({ event, persistent: hasDatabase() }, { status: 201 });
+    return NextResponse.json({ event, adminToken, persistent: hasDatabase() }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "모임을 만들지 못했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
   }

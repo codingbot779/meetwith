@@ -64,6 +64,7 @@ export default function CreateMeeting() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "모임을 만들지 못했습니다.");
+      try { localStorage.setItem(`hanjari:${data.event.id}:admin`, data.adminToken); } catch { /* 저장소를 쓸 수 없으면 삭제 권한만 없어집니다. */ }
       router.push(`/e/${data.event.id}?created=1`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "모임을 만들지 못했습니다.");
@@ -166,7 +167,7 @@ export default function CreateMeeting() {
           <div className="how-grid">
             <div className="how-item"><span className="how-number">01</span><div><h3><CalendarPlus size={17} style={{ verticalAlign: -3 }} /> 후보를 만들어요</h3><p>가능한 날짜와 시간 범위를 정하면 모임 링크가 생깁니다.</p></div></div>
             <div className="how-item"><span className="how-number">02</span><div><h3><Clock3 size={17} style={{ verticalAlign: -3 }} /> 각자 시간을 골라요</h3><p>참여자는 이름만 입력하고 되는 시간을 누릅니다.</p></div></div>
-            <div className="how-item"><span className="how-number">03</span><div><h3><MapPin size={17} style={{ verticalAlign: -3 }} /> 가장 진한 시간에 만나요</h3><p>많이 겹칠수록 진해지는 히트맵으로 최적의 시간을 확인하세요.</p></div></div>
+            <div className="how-item"><span className="how-number">03</span><div><h3><MapPin size={17} style={{ verticalAlign: -3 }} /> 가장 진한 시간에 만나요</h3><p>많이 겹칠수록 진해지는 히트맵으로 최적의 시간을 확인하세요. 시간이 확정되면 모임을 삭제해 참여자 정보를 지워 주세요.</p></div></div>
           </div>
         </section>
       </main>
