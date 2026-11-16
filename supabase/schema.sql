@@ -54,3 +54,29 @@ $$;
 
 revoke all on function public.delete_meeting(text, text) from public;
 grant execute on function public.delete_meeting(text, text) to anon;
+
+-- 모임을 만든 사람이 확정한 시간. anon은 data 컬럼만 수정할 수 있으므로 이 컬럼은 아래 함수로만 바뀝니다.
+alter table public.meetings add column if not exists confirmed jsonb;
+
+-- 관리자 키가 일치할 때만 확정 시간을 저장합니다. confirmed_slot이 null이면 확정을 취소합니다.
+create or replace function public.confirm_meeting(meeting_id text, admin_token text, confirmed_slot jsonb)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_count integer;
+begin
+  update public.meetings
+  set confirmed = confirmed_slot
+  where id = meeting_id
+    and admin_token_hash is not null
+    and admin_token_hash = encode(sha256(convert_to(admin_token, 'UTF8')), 'hex');
+  get diagnostics updated_count = row_count;
+  return updated_count > 0;
+end;
+$$;
+
+revoke all on function public.confirm_meeting(text, text, jsonb) from public;
+grant execute on function public.confirm_meeting(text, text, jsonb) to anon;

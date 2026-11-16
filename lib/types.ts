@@ -24,9 +24,17 @@ export type MeetingEvent = {
   location: LocationInfo | null;
   createdAt: string;
   participants: Participant[];
+  /** 모임을 만든 사람이 확정한 시간. 관리자 키로만 바꿀 수 있습니다. */
+  confirmed?: ConfirmedSlot | null;
 };
 
-export type EventInput = Omit<MeetingEvent, "id" | "createdAt" | "participants">;
+export type ConfirmedSlot = {
+  /** slotKey(date, time) 형식: "YYYY-MM-DDTHH:MM" */
+  slot: string;
+  confirmedAt: string;
+};
+
+export type EventInput = Omit<MeetingEvent, "id" | "createdAt" | "participants" | "confirmed">;
 
 export function slotKey(date: string, time: string) {
   return `${date}T${time}`;

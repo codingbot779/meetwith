@@ -1,13 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, KeyRound, MapPin, Pencil, Share2, ShieldCheck, Trash2, UserRound, UsersRound, X } from "lucide-react";
+import { ArrowLeft, CalendarCheck, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, KeyRound, MapPin, Pencil, Share2, ShieldCheck, Trash2, UserRound, UsersRound, X } from "lucide-react";
 import Link from "next/link";
 import type { MeetingEvent } from "@/lib/types";
 import { slotKey, timeSlots } from "@/lib/types";
 
 const week = ["일", "월", "화", "수", "목", "금", "토"];
 const avatarColors = ["#e7e4d2", "#dceee3", "#eee1d5", "#e3e5ef", "#ece0e8"];
+
+const REFRESH_MS = 10_000;
+
+function addMinutes(time: string, minutes: number) {
+  const [hour, minute] = time.split(":").map(Number);
+  const total = hour * 60 + minute + minutes;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function splitSlot(slot: string) {
+  const [date, time] = slot.split("T");
+  return { date, time };
+}
 
 function dateParts(date: string) {
   const parsed = new Date(`${date}T12:00:00`);
@@ -33,7 +46,11 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   const [deleteError, setDeleteError] = useState("");
   const [eventDeleted, setEventDeleted] = useState(false);
   const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const dragValue = useRef<boolean | null>(null);
+  /** 내가 저장·삭제·확정할 때마다 올려서, 그 전에 시작된 자동 갱신 응답이 최신 상태를 덮어쓰지 않게 합니다. */
+  const mutation = useRef(0);
+  const lastConfirmed = useRef<string | null | undefined>(undefined);
   const closeButton = useRef<HTMLButtonElement>(null);
 
   const loadEvent = useCallback(async () => {
@@ -66,6 +83,49 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     setAdminToken(hashToken || localStorage.getItem(`hanjari:${eventId}:admin`));
     if (new URLSearchParams(window.location.search).get("created") === "1") setShareOpen(true);
   }, [eventId, loadEvent]);
+
+  // 다른 참여자의 응답과 확정 소식을 새로고침 없이 반영합니다. 화면이 보일 때만 주기적으로 확인해요.
+  useEffect(() => {
+    if (eventDeleted) return;
+    let stopped = false;
+    async function refresh() {
+      if (document.visibilityState !== "visible") return;
+      const startedAt = mutation.current;
+      try {
+        const response = await fetch(`/api/events/${eventId}`, { cache: "no-store" });
+        if (stopped || startedAt !== mutation.current) return;
+        if (response.status === 404) { setEvent(null); setError("모임이 삭제되었거나 찾을 수 없어요."); return; }
+        if (!response.ok) return;
+        const data = await response.json();
+        if (stopped || startedAt !== mutation.current) return;
+        setEvent(data.event);
+        setPersistent(data.persistent);
+      } catch { /* 네트워크가 잠깐 끊겨도 다음 주기에 다시 시도합니다. */ }
+    }
+    const timer = window.setInterval(refresh, REFRESH_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
+  }, [eventId, eventDeleted]);
+
+  // 보고 있는 동안 확정되거나 바뀌면 알려줍니다. (처음 불러올 때는 알리지 않음)
+  useEffect(() => {
+    if (!event) return;
+    const current = event.confirmed?.slot ?? null;
+    const previous = lastConfirmed.current;
+    lastConfirmed.current = current;
+    if (previous === undefined) {
+      // 처음 열었을 때 확정된 날짜가 있으면 모바일 날짜 탭을 그 날로 맞춥니다.
+      if (current) setActiveDate(Math.max(0, event.dates.indexOf(splitSlot(current).date)));
+      return;
+    }
+    if (previous === current) return;
+    if (current) {
+      const { date, time } = splitSlot(current);
+      setToast(`모임 시간이 확정됐어요 · ${dateParts(date).label} ${time}`);
+    } else setToast("모임 시간 확정이 취소됐어요.");
+  }, [event]);
 
   useEffect(() => {
     if (!toast) return;
@@ -116,7 +176,9 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     if (!event) return;
     const url = inviteUrl();
     if (navigator.share) {
-      try { await navigator.share({ title: `${event.title} · 한자리`, text: "되는 시간을 알려주세요!", url }); } catch { return; }
+      const confirmed = event.confirmed ? splitSlot(event.confirmed.slot) : null;
+      const text = confirmed ? `${dateParts(confirmed.date).label} ${confirmed.time}에 만나요!` : "되는 시간을 알려주세요!";
+      try { await navigator.share({ title: `${event.title} · 한자리`, text, url }); } catch { return; }
     } else await copyLink();
   }
 
@@ -143,7 +205,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   async function saveAvailability(formEvent: React.FormEvent) {
     formEvent.preventDefault();
     if (!name.trim()) { setError("이름을 먼저 입력해 주세요."); return; }
-    setSaving(true); setError("");
+    setSaving(true); setError(""); mutation.current++;
     try {
       const response = await fetch(`/api/events/${eventId}/participants`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -164,6 +226,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
 
   async function deleteParticipant(id: string, personName: string) {
     if (!window.confirm(`${personName}님의 응답을 삭제할까요?`)) return;
+    mutation.current++;
     const response = await fetch(`/api/events/${eventId}/participants`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ participantId: id }) });
     const data = await response.json();
     if (!response.ok) return showToast(data.error || "삭제하지 못했습니다.");
@@ -173,7 +236,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   }
 
   async function deleteMeeting() {
-    setDeletingEvent(true); setDeleteError("");
+    setDeletingEvent(true); setDeleteError(""); mutation.current++;
     try {
       const response = await fetch(`/api/events/${eventId}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adminToken }) });
       const data = await response.json();
@@ -189,6 +252,27 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     } finally { setDeletingEvent(false); }
   }
 
+  async function confirmSlot(slot: string | null) {
+    if (!event || !adminToken) return;
+    if (slot) {
+      const { date, time } = splitSlot(slot);
+      const people = counts.get(slot)?.length ?? 0;
+      if (!window.confirm(`${dateParts(date).label} ${time}로 모임을 확정할까요?\n가능한 사람: ${people}/${event.participants.length}명\n링크를 연 모든 참여자에게 확정된 시간이 보여요.`)) return;
+    } else if (!window.confirm("모임 시간 확정을 취소할까요?")) return;
+    setConfirming(true); mutation.current++;
+    try {
+      const response = await fetch(`/api/events/${eventId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adminToken, slot }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "확정하지 못했습니다.");
+      lastConfirmed.current = data.event.confirmed?.slot ?? null; // 내가 바꾼 것은 토스트를 따로 띄웁니다.
+      setEvent(data.event);
+      showToast(slot ? "모임 시간을 확정했어요. 참여자들에게도 보여요." : "확정을 취소했어요.");
+      if (slot) window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (caught) {
+      showToast(caught instanceof Error ? caught.message : "확정하지 못했습니다.");
+    } finally { setConfirming(false); }
+  }
+
   function focusBest(key: string, date: string) {
     setActiveDate(Math.max(0, event?.dates.indexOf(date) ?? 0));
     setFocusedSlot(key);
@@ -200,6 +284,10 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   if (!event) return <div className="error-screen"><div><h1>모임을 찾을 수 없어요</h1><p className="room-description">{error || "링크가 올바른지 확인해 주세요."}</p><Link className="primary-button" href="/"><ArrowLeft size={18} /> 새 모임 만들기</Link></div></div>;
 
   const total = event.participants.length;
+  const confirmedSlot = event.confirmed?.slot ?? null;
+  const confirmedParts = confirmedSlot ? splitSlot(confirmedSlot) : null;
+  const confirmedPeople = confirmedSlot ? counts.get(confirmedSlot) ?? [] : [];
+  const focusedPeople = focusedSlot ? counts.get(focusedSlot) ?? [] : [];
   const shareUrlLabel = typeof window === "undefined" ? `/e/${event.id}` : `${window.location.host}/e/${event.id}`;
   const mapQuery = encodeURIComponent([event.location?.name, event.location?.address].filter(Boolean).join(" "));
   const mapUrl = event.location?.region === "domestic" ? `https://map.naver.com/p/search/${mapQuery}` : `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
@@ -212,6 +300,15 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
           <h1>{event.title}</h1>
           {event.description && <p className="room-description">{event.description}</p>}
           <div className="room-meta"><span><CalendarDays size={16} /> {event.dates.length}개 날짜 · {event.startTime}–{event.endTime}</span><span><UsersRound size={16} /> {total}명 참여</span>{event.location && <span><MapPin size={16} /> {event.location.name}</span>}</div>
+          {confirmedParts && <div className="confirmed-banner" role="status">
+            <CalendarCheck size={28} strokeWidth={1.6} aria-hidden="true" />
+            <div className="confirmed-copy">
+              <span className="confirmed-label">확정된 모임 시간</span>
+              <strong>{dateParts(confirmedParts.date).label} · {confirmedParts.time}–{addMinutes(confirmedParts.time, event.slotMinutes)}</strong>
+              <small>{event.location ? `${event.location.name} · ` : ""}가능한 사람 {confirmedPeople.length}/{total}명{confirmedPeople.length ? ` (${confirmedPeople.join(", ")})` : ""}</small>
+            </div>
+            {adminToken && <button className="secondary-button confirmed-cancel" onClick={() => confirmSlot(null)} disabled={confirming}>확정 취소</button>}
+          </div>}
         </section>
 
         {!persistent && <div className="demo-banner" role="status">현재 미리보기 저장 모드예요. Supabase 환경 변수를 연결하면 여러 기기에서 응답이 안전하게 유지됩니다.</div>}
@@ -243,9 +340,9 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
                       const isSelected = selected.has(key);
                       return <button
                         id={`slot-${key}`} key={key} type="button"
-                        className={`slot ${index !== activeDate ? "mobile-day-hidden" : ""} ${editing ? "editing" : ""} ${editing && isSelected ? "selected" : ""} ${focusedSlot === key ? "focused" : ""}`}
+                        className={`slot ${index !== activeDate ? "mobile-day-hidden" : ""} ${editing ? "editing" : ""} ${editing && isSelected ? "selected" : ""} ${focusedSlot === key ? "focused" : ""} ${!editing && confirmedSlot === key ? "confirmed" : ""}`}
                         style={{ "--heat": editing ? (isSelected ? .9 : .045) : heat } as React.CSSProperties}
-                        aria-label={`${dateParts(date).label} ${time}, ${editing ? (isSelected ? "가능함" : "불가능함") : `${people.length}명 가능${people.length ? `: ${people.join(", ")}` : ""}`}`}
+                        aria-label={`${dateParts(date).label} ${time}${confirmedSlot === key ? " (확정된 시간)" : ""}, ${editing ? (isSelected ? "가능함" : "불가능함") : `${people.length}명 가능${people.length ? `: ${people.join(", ")}` : ""}`}`}
                         aria-pressed={editing ? isSelected : undefined}
                         onPointerDown={(pointer) => { if (editing) { dragValue.current = !selected.has(key); toggleSlot(key, dragValue.current); } else setFocusedSlot(key); }}
                         onPointerEnter={() => { if (editing && dragValue.current !== null) toggleSlot(key, dragValue.current); }}
@@ -256,7 +353,12 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
                 ))}
               </div>
             </div>
-            <p className="grid-help">{editing ? "칸을 누르거나 드래그해서 선택하세요. 한 번 더 누르면 해제됩니다." : "칸을 누르면 그 시간에 가능한 참여자를 확인할 수 있어요."}</p>
+            <p className="grid-help">{editing ? "칸을 누르거나 드래그해서 선택하세요. 한 번 더 누르면 해제됩니다." : adminToken ? "칸을 누르면 가능한 참여자를 확인하고, 그 시간으로 모임을 확정할 수 있어요." : "칸을 누르면 그 시간에 가능한 참여자를 확인할 수 있어요."}</p>
+
+            {adminToken && !editing && focusedSlot && <div className="confirm-bar">
+              <span><strong>{dateParts(splitSlot(focusedSlot).date).label} · {splitSlot(focusedSlot).time}</strong><small>{focusedPeople.length}/{total}명 가능{focusedPeople.length ? ` · ${focusedPeople.join(", ")}` : ""}</small></span>
+              {focusedSlot === confirmedSlot ? <b className="confirmed-chip"><Check size={14} /> 확정됨</b> : <button className="primary-button" onClick={() => confirmSlot(focusedSlot)} disabled={confirming}><CalendarCheck size={17} /> 이 시간으로 확정</button>}
+            </div>}
 
             {!editing ? <button className="primary-button full-button" style={{ marginTop: 20 }} onClick={() => startEditing()}><Pencil size={18} /> {participantId ? "내 일정 수정하기" : "내 일정 입력하기"}</button> : (
               <form className="name-editor" onSubmit={saveAvailability}>
@@ -266,7 +368,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
               </form>
             )}
 
-            <div className="best-section"><h3>가장 많이 겹치는 시간</h3>{best.length ? best.map((item) => <button className="best-slot" key={item.key} onClick={() => focusBest(item.key, item.date)}><span><strong>{dateParts(item.date).label} · {item.time}</strong><small>{item.people.join(", ")}</small></span><b>{item.people.length} / {total}명</b></button>) : <p className="empty-copy">아직 응답이 없어요. 첫 번째로 가능한 시간을 알려주세요.</p>}</div>
+            <div className="best-section"><h3>가장 많이 겹치는 시간</h3>{best.length ? best.map((item) => <div className="best-row" key={item.key}><button className="best-slot" onClick={() => focusBest(item.key, item.date)}><span><strong>{dateParts(item.date).label} · {item.time}{item.key === confirmedSlot && <em className="confirmed-chip"><Check size={13} /> 확정</em>}</strong><small>{item.people.join(", ")}</small></span><b>{item.people.length} / {total}명</b></button>{adminToken && item.key !== confirmedSlot && <button className="secondary-button best-confirm" onClick={() => confirmSlot(item.key)} disabled={confirming} aria-label={`${dateParts(item.date).label} ${item.time}로 확정`}>확정</button>}</div>) : <p className="empty-copy">아직 응답이 없어요. 첫 번째로 가능한 시간을 알려주세요.</p>}</div>
           </section>
 
           <aside className="room-sidebar">
@@ -281,7 +383,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
             <section className="side-section"><div className="side-heading"><h2>모임이 확정됐나요?</h2></div><div className="privacy-card">
               {adminToken ? <>
                 <p><ShieldCheck size={16} style={{ verticalAlign: -3, color: "var(--accent)" }} /> 만날 시간이 정해졌다면 모임을 삭제해 주세요. 참여자들의 이름과 가능한 시간이 데이터베이스에서 영구 삭제되어 개인정보를 스스로 지킬 수 있어요.</p>
-                <p className="privacy-card-hint">모임을 만든 사람만 삭제할 수 있어요. 확정된 시간과 장소는 삭제 전에 따로 메모해 두세요.</p>
+                <p className="privacy-card-hint">{confirmedSlot ? "삭제하면 참여자들도 확정된 시간을 더 이상 볼 수 없어요. 모두 확인한 뒤 삭제하세요." : "모임을 만든 사람만 삭제할 수 있어요. 확정된 시간과 장소는 삭제 전에 따로 메모해 두세요."}</p>
                 <button className="danger-button full-button" onClick={() => { setDeleteError(""); setDeleteOpen(true); }}><Trash2 size={17} /> 모임 삭제하기</button>
                 <button className="secondary-button full-button" style={{ marginTop: 8 }} onClick={copyAdminLink}><KeyRound size={17} /> 관리자 링크 복사</button>
                 <p className="privacy-card-hint" style={{ margin: "8px 0 0" }}>다른 기기에서 삭제하려면 관리자 링크로 접속하세요.</p>
