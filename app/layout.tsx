@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Sans_KR, Cormorant_Garamond } from "next/font/google";
+import { IBM_Plex_Sans_KR, Newsreader, Noto_Serif_KR } from "next/font/google";
 import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
 
@@ -10,11 +10,18 @@ const plex = IBM_Plex_Sans_KR({
   display: "swap",
 });
 
-const cormorant = Cormorant_Garamond({
+const newsreader = Newsreader({
   subsets: ["latin"],
-  weight: ["500", "600"],
+  weight: ["300", "400"],
   variable: "--font-display",
   display: "swap",
+});
+
+const serifKr = Noto_Serif_KR({
+  weight: ["300", "400"],
+  variable: "--font-serif-kr",
+  display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -29,12 +36,12 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#fffce9",
+  themeColor: "#f7f1e8",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko" data-scroll-behavior="smooth" className={`${plex.variable} ${cormorant.variable}`}>
+    <html lang="ko" data-scroll-behavior="smooth" className={`${plex.variable} ${newsreader.variable} ${serifKr.variable}`}>
       <body>
         {children}
         <PwaRegister />

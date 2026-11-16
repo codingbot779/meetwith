@@ -4,8 +4,8 @@
   "description": "모두가 되는 시간을 한눈에 찾는 가장 간단한 방법",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fffce9",
-  "theme_color": "#fffce9",
+  "background_color": "#f7f1e8",
+  "theme_color": "#f7f1e8",
   "lang": "ko",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
