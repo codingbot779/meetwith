@@ -154,7 +154,7 @@ export default function CreateMeeting() {
             <div className="heatmap-preview">
               <div className="preview-days"><span />{previewDates.map((date) => { const parsed = new Date(`${date}T12:00:00`); return <span key={date}>{week[parsed.getDay()]}<strong>{parsed.getDate()}</strong></span>; })}</div>
               {["18:00", "19:00", "20:00", "21:00"].map((time, row) => (
-                <div className="preview-row" key={time}><span className="preview-time">{time.slice(0, 2)}</span>{previewDates.map((date, column) => <div className="preview-cell" key={date} style={{ "--heat": [0.12, 0.28, 0.5, 0.78][Math.min(3, Math.max(0, 3 - Math.abs(row - 2) - (column === 1 ? 1 : 0)))] } as React.CSSProperties} />)}</div>
+                <div className="preview-row" key={time}><span className="preview-time">{time.slice(0, 2)}</span>{previewDates.map((date, column) => <div className="preview-cell" key={date} style={{ "--heat": [0.12, 0.28, 0.5, 0.78][Math.min(3, Math.max(0, 3 - Math.abs(row - 2) - Math.abs(column - 1)))] } as React.CSSProperties} />)}</div>
               ))}
             </div>
             <div className="best-time"><div><small><Check size={13} style={{ verticalAlign: -2 }} /> 가장 많이 되는 시간</small><strong>{previewDates[1] ? formatDate(previewDates[1]) : "날짜를 선택해 보세요"} · 20:00</strong></div><span className="best-count">5 / 6명</span></div>
