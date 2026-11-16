@@ -22,6 +22,26 @@ function splitSlot(slot: string) {
   return { date, time };
 }
 
+/** 후보 날짜가 걸쳐 있는 달 목록 ("YYYY-MM") */
+function monthsBetween(dates: string[]) {
+  if (!dates.length) return [];
+  const [startYear, startMonth] = dates[0].split("-").map(Number);
+  const [endYear, endMonth] = dates[dates.length - 1].split("-").map(Number);
+  const result: string[] = [];
+  for (let year = startYear, month = startMonth; year < endYear || (year === endYear && month <= endMonth); month === 12 ? (year++, month = 1) : month++) {
+    result.push(`${year}-${String(month).padStart(2, "0")}`);
+  }
+  return result;
+}
+
+/** 달력 칸: 1일 앞의 빈칸은 null */
+function monthCells(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const blanks = new Date(year, monthNumber - 1, 1).getDay();
+  const days = new Date(year, monthNumber, 0).getDate();
+  return [...Array<null>(blanks).fill(null), ...Array.from({ length: days }, (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`)];
+}
+
 function dateParts(date: string) {
   const parsed = new Date(`${date}T12:00:00`);
   return { day: parsed.getDate(), week: week[parsed.getDay()], label: `${parsed.getMonth() + 1}월 ${parsed.getDate()}일 (${week[parsed.getDay()]})` };
@@ -39,6 +59,7 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeDate, setActiveDate] = useState(0);
+  const [calendarMonth, setCalendarMonth] = useState(0);
   const [focusedSlot, setFocusedSlot] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -153,6 +174,23 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
     const all = event.dates.flatMap((date) => slots.map((time) => ({ key: slotKey(date, time), date, time, people: counts.get(slotKey(date, time)) ?? [] })));
     return all.filter((item) => item.people.length > 0).sort((a, b) => b.people.length - a.people.length || a.key.localeCompare(b.key)).slice(0, 5);
   }, [event, slots, counts]);
+
+  // 날짜별로 가장 많이 겹치는 인원 (달력 색 진하기에 사용)
+  const dayBest = useMemo(() => {
+    const map = new Map<string, number>();
+    event?.dates.forEach((date) => map.set(date, Math.max(0, ...slots.map((time) => counts.get(slotKey(date, time))?.length ?? 0))));
+    return map;
+  }, [event, slots, counts]);
+
+  const datesKey = event?.dates.join(",") ?? "";
+  const months = useMemo(() => monthsBetween(datesKey ? datesKey.split(",") : []), [datesKey]);
+
+  // 보고 있는 날짜가 다른 달로 넘어가면 달력도 그 달로 넘깁니다.
+  useEffect(() => {
+    const month = datesKey.split(",")[activeDate]?.slice(0, 7);
+    const index = month ? months.indexOf(month) : -1;
+    if (index >= 0) setCalendarMonth(index);
+  }, [activeDate, datesKey, months]);
 
   function showToast(message: string) { setToast(message); }
 
@@ -319,6 +357,41 @@ export default function MeetingRoom({ eventId }: { eventId: string }) {
               <h2 className="panel-title" id="schedule-title">{editing ? "내가 되는 시간을 선택하세요" : "모두의 가능한 시간"}</h2>
               <div className="legend" aria-label="참여자가 많을수록 진한 초록색"><span>적음</span><span className="legend-scale">{[.08, .25, .5, .75, 1].map((heat) => <i key={heat} style={{ "--heat": heat } as React.CSSProperties} />)}</span><span>많음</span></div>
             </div>
+
+            {months.length > 0 && (() => {
+              const month = months[Math.min(calendarMonth, months.length - 1)];
+              const [year, monthNumber] = month.split("-").map(Number);
+              const confirmedDate = confirmedSlot ? splitSlot(confirmedSlot).date : null;
+              return <div className="mobile-calendar">
+                <div className="cal-head">
+                  <button className="icon-button" onClick={() => setCalendarMonth(calendarMonth - 1)} disabled={calendarMonth === 0} aria-label="이전 달"><ChevronLeft size={18} /></button>
+                  <span className="cal-title">{year}년 {monthNumber}월</span>
+                  <button className="icon-button" onClick={() => setCalendarMonth(calendarMonth + 1)} disabled={calendarMonth >= months.length - 1} aria-label="다음 달"><ChevronRight size={18} /></button>
+                </div>
+                <div className="cal-grid">
+                  {week.map((day) => <span className="cal-week" key={day} aria-hidden="true">{day}</span>)}
+                  {monthCells(month).map((date, index) => {
+                    if (!date) return <span key={`blank-${index}`} />;
+                    const dateIndex = event.dates.indexOf(date);
+                    const day = Number(date.slice(8));
+                    if (dateIndex < 0) return <span className="cal-day" key={date} aria-hidden="true">{day}<small /></span>;
+                    const mine = editing ? slots.filter((time) => selected.has(slotKey(date, time))).length : 0;
+                    const most = dayBest.get(date) ?? 0;
+                    const heat = editing ? (mine ? .9 : .06) : most ? .16 + (total ? most / total : 0) * .8 : .06;
+                    const isConfirmed = !editing && date === confirmedDate;
+                    return <button
+                      key={date} type="button"
+                      className={`cal-day candidate ${heat > .55 ? "light" : ""} ${dateIndex === activeDate ? "active" : ""} ${isConfirmed ? "confirmed" : ""}`}
+                      style={{ "--heat": heat } as React.CSSProperties}
+                      onClick={() => setActiveDate(dateIndex)}
+                      aria-pressed={dateIndex === activeDate}
+                      aria-label={`${dateParts(date).label}, ${editing ? `내가 고른 시간 ${mine}칸` : `최대 ${most}명 가능`}${isConfirmed ? ", 확정된 날" : ""}`}
+                    >{day}<small>{editing ? (mine ? `${mine}칸` : "") : most ? `${most}명` : ""}</small></button>;
+                  })}
+                </div>
+                <p className="cal-foot">후보 날짜 {event.dates.length}일 · {editing ? "내가 고른 날이 진하게 보여요" : "진할수록 많이 겹쳐요"}{confirmedDate && !editing && <><span className="cal-dot" aria-hidden="true" /> 확정된 날</>}</p>
+              </div>;
+            })()}
 
             <div className="mobile-date-nav">
               <button className="icon-button" onClick={() => setActiveDate(Math.max(0, activeDate - 1))} disabled={activeDate === 0} aria-label="이전 날짜"><ChevronLeft /></button>
